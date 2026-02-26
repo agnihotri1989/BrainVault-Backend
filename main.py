@@ -1,10 +1,11 @@
 from langchain_service import store_note_langchain, ask_question_langchain, test_langchain_connection
+from langchain_pinecone_service import store_note
+from langchain_llm_service import ask_question
 from unittest import result
 from urllib import response
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from pinecone_service import get_embedding, store_note, search_notes, test_connection
 import os
 import requests
 from dotenv import load_dotenv
@@ -56,7 +57,7 @@ async def save_note(request: dict):
     note_id = str(uuid.uuid4())  # e.g., "a3f2b1c4-..."
     
     # Store with metadata
-    success = store_note_langchain(
+    success = store_note(
         note_id=note_id,
         title=title,
         content=content,
@@ -74,7 +75,7 @@ async def save_note(request: dict):
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
     
-    result = ask_question_langchain(request.message)
+    result = ask_question(request.message)
     print("RESULT:", result)
     return ChatResponse(reply=result["answer"])
 
