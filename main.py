@@ -1,5 +1,4 @@
-from langchain_service import store_note_langchain, ask_question_langchain, test_langchain_connection
-from langchain_pinecone_service import store_note
+from langchain_pinecone_service import store_note,search_notes
 from langchain_llm_service import ask_question
 from unittest import result
 from urllib import response
@@ -75,7 +74,7 @@ async def save_note(request: dict):
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
     
-    result = ask_question(request.message)
+    result = search_notes(request.message)
     print("RESULT:", result)
     return ChatResponse(reply=result["answer"])
 
@@ -166,9 +165,6 @@ async def chat(request: ChatRequest):
 #     # 🔲 Dummy response - we'll replace this with real AI in the next step
 #     return ChatResponse(answer=answer, source="huggingface") 
 
-@app.get("/test-langchain")
-def test_langchain():
-    success = test_langchain_connection()
-    return {"status": "connected" if success else "failed"}
+
 
 
