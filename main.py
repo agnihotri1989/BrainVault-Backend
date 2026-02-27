@@ -1,5 +1,4 @@
 from langchain_pinecone_service import store_note,search_notes
-from langchain_llm_service import ask_question
 from unittest import result
 from urllib import response
 from fastapi import FastAPI
