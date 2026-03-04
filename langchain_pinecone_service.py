@@ -25,7 +25,20 @@ vectorstore = PineconeVectorStore(
     embedding=embedding_model
 )
 
-def store_note(note_id: str, title: str, content: str, metadata: dict = {}):
+def store_note(note_id: str, title: str, content: str, user_id: int, metadata: dict = {}):
+    """
+    Store a note in Pinecone with user_id for filtering.
+    
+    Args:
+        note_id: Unique identifier for the note
+        title: Note title
+        content: Note content
+        user_id: ID of the user who owns this note (NEW!)
+        metadata: Additional metadata
+    
+    Returns:
+        bool: True if successful
+    """
     
     # Step 1 - Combine title + content (same as before!)
     combined_text = f"{title}. {content}"
@@ -37,7 +50,8 @@ def store_note(note_id: str, title: str, content: str, metadata: dict = {}):
             "title": title,
             "content": content,
             "text": combined_text,
-            **metadata
+            "user_id": user_id,  # ← NEW: Tag note with user ID
+            **metadata  # Include any additional metadata passed in
         }
     )
     
@@ -46,10 +60,32 @@ def store_note(note_id: str, title: str, content: str, metadata: dict = {}):
     print(f"✅ Note '{note_id}' stored via LangChain!")
     return True
 
-def search_notes(query: str, top_k: int = 3) -> list:
+# ✅ CHANGED: Added user_id parameter and metadata filtering
+def search_notes(query: str, user_id: int, top_k: int = 3) -> dict:
+    """
+    Search notes in Pinecone filtered by user_id.
+    Each user only sees their own notes.
     
-    # LangChain handles embed + search + format in ONE line!
-    results = vectorstore.similarity_search(query, k=top_k)
+    Args:
+        query: Search query string
+        user_id: ID of the user performing the search (NEW!)
+        top_k: Number of results to return
+    
+    Returns:
+        dict: Contains 'matches' and 'answer' for LLM context
+    """
+    
+    # ✅ NEW: Create metadata filter to only search this user's notes
+    # This is the KEY change - Pinecone will only return notes where user_id matches
+    filter_dict = {"user_id": {"$eq": user_id}}
+    
+    # ✅ CHANGED: Added filter parameter to similarity_search
+    # LangChain handles embed + search + filter in ONE line!
+    results = vectorstore.similarity_search(
+        query, 
+        k=top_k,
+        filter=filter_dict  # ← NEW: Only search this user's notes!
+    )
     
     matches = []
     for doc in results:
@@ -58,6 +94,21 @@ def search_notes(query: str, top_k: int = 3) -> list:
             "content": doc.metadata.get('content', ''),
             "text": doc.page_content
         })
-        print(f"   Found: {doc.metadata.get('title', '')}")
+        print(f"   Found for user {user_id}: {doc.metadata.get('title', '')}")
     
-    return matches
+    # ✅ NEW: Return structured response with answer context
+    if matches:
+        # Create context from matches for LLM
+        context = "\n\n".join([
+            f"Title: {m['title']}\nContent: {m['content']}" 
+            for m in matches
+        ])
+        answer = f"Found {len(matches)} relevant notes:\n\n{context}"
+    else:
+        answer = "No notes found matching your search."
+    
+    return {
+        "matches": matches,
+        "answer": answer,
+        "count": len(matches)
+    }

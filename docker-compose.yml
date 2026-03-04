@@ -1,0 +1,39 @@
+services:
+  # PostgreSQL Database Service
+  db:
+    image: postgres:15-alpine  # Lightweight PostgreSQL image
+    container_name: brainvault_db
+    environment:
+      POSTGRES_DB: brainvault        # Database name
+      POSTGRES_USER: brainvault_user  # Database user
+      POSTGRES_PASSWORD: brainvault123  # Change this!
+    volumes:
+      - postgres_data:/var/lib/postgresql/data  # Persist data
+    ports:
+      - "5432:5432"  # Expose PostgreSQL port (optional, for local debugging)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U brainvault_user"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI Application Service
+  web:
+    build: .  # Build from your existing Dockerfile
+    container_name: brainvault_api
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/app  # Mount your code (enables hot reload during development)
+    ports:
+      - "8000:8000"  # Expose FastAPI to host machine
+    environment:
+      DATABASE_URL: postgresql://brainvault_user:brainvault123@db:5432/brainvault
+      # Add other environment variables (Pinecone, etc.)
+    depends_on:
+      db:
+        condition: service_healthy  # Wait for database to be ready
+    restart: unless-stopped
+
+# Named volume for PostgreSQL data persistence
+volumes:
+  postgres_data:

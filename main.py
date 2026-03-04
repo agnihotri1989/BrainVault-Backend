@@ -1,169 +1,159 @@
-from langchain_pinecone_service import store_note,search_notes
-from unittest import result
-from urllib import response
-from fastapi import FastAPI
+# main.py
+from langchain_pinecone_service import store_note, search_notes
+from fastapi import FastAPI, Depends, HTTPException, status
+from dependencies import get_current_user
+from models import User
+from auth import router as auth_router
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
-import requests
-from dotenv import load_dotenv
 import uuid
-load_dotenv() 
-HF_TOKEN = os.getenv("HF_TOKEN")
-#base_urlsummry = "https://router.huggingface.co/hf-inference/models/facebook/bart-large-cnn"
-BASEURLQNA = "https://router.huggingface.co/hf-inference/models/deepset/roberta-base-squad2"
-HF_URL = "https://router.huggingface.co/hf-inference/models/deepset/minilm-uncased-squad2"
-app = FastAPI(title="BrainVault API", description="API for BrainVault note management and retrieval", version="1.0" )
+from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+app = FastAPI(
+    title="BrainVault API", 
+    description="API for BrainVault note management and retrieval", 
+    version="1.0"
+)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"], 
-    allow_credentials=True,)
+    allow_credentials=True,
+)
 
-# question: str = ""           # The user's question
-    # note_context: str = ""
-# ✅ This defines the shape of data your app will SEND to the server
+# Include authentication routes
+app.include_router(auth_router)
+
+
+# ============ REQUEST/RESPONSE SCHEMAS ============
+
 class ChatRequest(BaseModel):
-         # The notes we'll search later (empty for now)
+    """Schema for chat requests"""
     message: str
-# ✅ This defines the shape of data the server will RETURN
+
+
 class ChatResponse(BaseModel):
+    """Schema for chat responses"""
     reply: str
 
+
+# ============ PUBLIC ENDPOINTS ============
+
 @app.get("/")
-def read_root():    return {"message": "BrainVault API is running!"}
+def read_root(): 
+    """Public endpoint - no authentication required"""
+    return {"message": "BrainVault API is running!"}
+
 
 @app.get("/health")
-def health_check(): return {"status": "healthy"}
+def health_check():
+    """Public endpoint - no authentication required""" 
+    return {"status": "healthy"}
 
 
-# Add a new endpoint to save notes
+# ============ PROTECTED ENDPOINTS (USER-SPECIFIC) ============
+
 @app.post("/api/notes")
-async def save_note(request: dict):
-    print("Received note:", request)
-    from datetime import datetime
+async def save_note(
+    request: dict,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Save a note (protected endpoint - user-specific).
+    Each user can only save their own notes.
+    
+    Expected request body:
+    {
+        "title": "Note title",
+        "content": "Note content"
+    }
+    """
+    print(f"User {current_user.email} (ID: {current_user.id}) is saving a note")
+    
     title = request.get("title")
     content = request.get("content")
-    # Basic validation
+    
     # Validation
     if not title or not content:
-        return {"error": "Both 'title' and 'content' fields are required"}
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Both 'title' and 'content' fields are required"
+        )
     
     # Generate unique ID
-    note_id = str(uuid.uuid4())  # e.g., "a3f2b1c4-..."
+    note_id = str(uuid.uuid4())
     
-    # Store with metadata
+    # ✅ Store with user_id - CRITICAL for user-specific filtering
     success = store_note(
         note_id=note_id,
         title=title,
         content=content,
-        metadata={"created_at": datetime.now().isoformat()}
+        user_id=current_user.id,  # ← Pass user ID!
+        metadata={
+            "created_at": datetime.now().isoformat(),
+            "user_email": current_user.email  # Optional: For debugging
+        }
     )
     
     if success:
         return {
             "message": "Note saved successfully!",
-            "note_id": note_id  # Return ID to Android for syncing
+            "note_id": note_id,
+            "user": current_user.email
         }
     else:
-        return {"error": "Failed to save note"}
-    
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save note"
+        )
+
+
 @app.post("/api/chat")
-async def chat(request: ChatRequest):
+async def chat(
+    request: ChatRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Search notes using chat (protected endpoint - user-specific).
+    Each user can only search their own notes.
     
-    result = search_notes(request.message)
-    print("RESULT:", result)
+    Expected request body:
+    {
+        "message": "What are my meeting notes?"
+    }
+    """
+    print(f"User {current_user.email} (ID: {current_user.id}) is searching: {request.message}")
+    
+    # ✅ Search only this user's notes by passing user_id
+    result = search_notes(
+        query=request.message,
+        user_id=current_user.id  # ← Pass user ID for filtering!
+    )
+    
+    print(f"Search results for user {current_user.id}: {result['count']} matches")
+    
     return ChatResponse(reply=result["answer"])
 
 
-# Update your existing /api/chat to use Pinecone context
-# @app.post("/api/chat")
-# async def chat(request: ChatRequest):
-    
-#     print("ChatRequest:", request.message)
-#     # ── STEP 1: Find relevant notes from Pinecone ──────────────────
-#     relevant_notes = search_notes(request.message)
-    
-#     if relevant_notes:
-#         context = "\n".join([f"- {n['text']}" for n in relevant_notes])
-#     else:
-#         context = "No personal notes found."
-    
-#     # ── STEP 2: Build a smart prompt with your notes as context ────
-#     prompt = f"""Here are some personal notes:
-# {context}
+# ============ OPTIONAL: GET endpoint to list user's notes ============
 
-# Based on the notes above, answer this question: {request.message}"""
-
-#     # ── STEP 3: Send the prompt to HuggingFace ─────────────────────
-#     hf_headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-  
-    
-#     hf_response = requests.post(
-#         "https://router.huggingface.co/hf-inference/models/deepset/roberta-base-squad2",                                  # your existing HF URL variable
-#         headers=hf_headers,
-#        json={
-#         "inputs": {
-#             "question": request.message,   # 👈 the user's question
-#             "context": context             # 👈 your Pinecone notes as context
-#         }
-#         ,
-#         "options": {
-#             "wait_for_model": True    # 👈 tells HF to wait until model is ready
-#         }
-#     }                # 👈 prompt replaces request.message
-#     )
-#     print("HF_RESPONSE:", hf_response)
-    
-#     # ── STEP 4: Guard against empty or failed responses ────────────
-#     if not hf_response.content:
-#         return ChatResponse(reply="AI returned an empty response.")
-    
-#     if hf_response.status_code != 200:
-#         return ChatResponse(reply=f"HuggingFace error: {hf_response.status_code}")
-    
-#     result = hf_response.json()
-#     print("HF_RESULT:", result)
-#     # ── STEP 5: Extract the text (facebook/bart-large-cnn returns summary_text) ──
-#     #ai_response = result[0].get("summary_text", "Sorry, I could not generate a response.")
-#     ai_response = result.get("answer", "Sorry, I could not generate a response.")
-#     print("AI_RESULT:", ai_response)
-#     # ── STEP 6: Return the final answer ────────────────────────────
-#     return ChatResponse(reply=ai_response)
- 
-# ✅ THE MAIN ENDPOINT - dummy for now, AI-powered later
-# @app.post("/api/chat")
-# def chat(request: ChatRequest) -> ChatResponse:
-
-#     headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-#     payload = {
-#         "inputs": request.question,
-#         "parameters": {"max_new_tokens": 200}
-#     }
-#     # Free HuggingFace model (no GPU needed)
-#     response = requests.post(
-#         "https://router.huggingface.co/hf-inference/models/facebook/bart-large-cnn",
-#         headers=headers,
-#         json=payload
-#     )
-#     print("HF Raw Response:", response.status_code, response.text)
-#     print("HF_TOKEN loaded:", HF_TOKEN if HF_TOKEN else "TOKEN IS NONE ❌")
-#     result = response.json()
-#     # Better error handling
-#     #if isinstance(result, list):
-#       #  answer = result[0]["summary_text"]
-#     #elif "error" in result:
-#         #answer = f"HF Error: {result['error']}"  # Shows real error now
-#     #else:
-#        # answer = str(result)
-#     # Extract the answer
-#     #answer = result[0]["generated_text"] if isinstance(result, list) else str(result)
-#     answer = result[0].get("summary_text") or result[0].get("generated_text") or str(result[0])
-#     # 🔲 Dummy response - we'll replace this with real AI in the next step
-#     return ChatResponse(answer=answer, source="huggingface") 
-
-
-
-
+@app.get("/api/notes")
+def get_user_notes(current_user: User = Depends(get_current_user)):
+    """
+    Get a list of all notes for the current user.
+    (Optional - you can implement this later if needed)
+    """
+    # For now, just return a message
+    # Later you can add a list_notes() function to query Pinecone
+    return {
+        "message": f"Notes for user {current_user.email}",
+        "user_id": current_user.id,
+        "note": "Use /api/chat to search your notes"
+    }
